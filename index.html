@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>碎碎念</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .text-content {
+            white-space: pre-wrap;
+            line-height: 1.6;
+        }
+    </style>
+</head>
+<body class="bg-gray-50">
+    <div class="max-w-3xl mx-auto p-4">
+        <header class="mb-8">
+            <h1 class="text-3xl font-bold text-gray-800">文本文件时间线</h1>
+            <p class="text-gray-500 mt-2">按更新时间排序（最新在前）</p>
+        </header>
+
+        <div id="fileContainer" class="space-y-8">
+            <!-- 加载状态 -->
+            <div id="loading" class="text-center py-10">
+                <p class="text-gray-600">加载文件中...</p>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // 配置GitHub
+        const config = {
+            username: "250502520",
+            repo: "suisuinian",
+            branch: "main" 
+        };
+
+        // 页面加载后执行
+        document.addEventListener('DOMContentLoaded', () => {
+            loadFilesByTime();
+        });
+
+        // 按时间顺序加载文件（由晚到早）
+        async function loadFilesByTime() {
+            try {
+                // 1. 获取仓库根目录所有文件
+                const fileListUrl = `https://api.github.com/repos/${config.username}/${config.repo}/contents?ref=${config.branch}`;
+                const response = await fetch(fileListUrl);
+                
+                if (!response.ok) throw new Error("无法获取文件列表");
+                
+                const allFiles = await response.json();
+                
+                // 2. 筛选出txt文件
+                const txtFiles = allFiles.filter(file => 
+                    file.type === 'file' && file.name.toLowerCase().endsWith('.txt')
+                );
+                
+                if (txtFiles.length === 0) {
+                    document.getElementById("fileContainer").innerHTML = 
+                        '<p class="text-gray-600 text-center py-10">未找到任何txt文件</p>';
+                    return;
+                }
+                
+                // 3. 按更新时间排序（最新的在前）
+                txtFiles.sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at));
+                
+                // 4. 加载并显示文件内容
+                displayFiles(txtFiles);
+                
+            } catch (error) {
+                document.getElementById("fileContainer").innerHTML = 
+                    `<p class="text-red-500 text-center py-10">加载失败：${error.message}</p>`;
+            }
+        }
+
+        // 显示文件列表
+        async function displayFiles(files) {
+            const container = document.getElementById("fileContainer");
+            container.innerHTML = ''; // 清空加载状态
+            
+            for (const file of files) {
+                // 获取文件内容（base64解码）
+                const contentResponse = await fetch(file.url);
+                const contentData = await contentResponse.json();
+                const content = atob(contentData.content);
+                
+                // 格式化时间
+                const formattedTime = new Date(file.updated_at).toLocaleString('zh-CN', {
+                    year: 'numeric',
+                    month: '2-digit',
+                    day: '2-digit',
+                    hour: '2-digit',
+                    minute: '2-digit'
+                });
+                
+                // 创建文件卡片
+                const fileCard = document.createElement('div');
+                fileCard.className = "bg-white rounded-lg shadow-sm p-5";
+                fileCard.innerHTML = `
+                    <div class="flex justify-between items-center mb-3">
+                        <h3 class="text-xl font-semibold text-gray-800">${file.name}</h3>
+                        <span class="text-sm text-gray-500">${formattedTime}</span>
+                    </div>
+                    <div class="text-content text-gray-700 bg-gray-50 p-4 rounded-md text-sm">
+                        ${content}
+                    </div>
+                `;
+                
+                container.appendChild(fileCard);
+            }
+        }
+    </script>
+</body>
+</html>
