@@ -42,7 +42,7 @@
                 const fileListUrl = `https://api.github.com/repos/${config.username}/${config.repo}/contents?ref=${config.branch}`;
                 const response = await fetch(fileListUrl);
                 
-                if (!response.ok) throw new Error("无法获取文件列表");
+                if (!response.ok) throw new Error(`API请求失败 (${response.status})`);
                 
                 const allFiles = await response.json();
                 const txtFiles = allFiles.filter(file => 
@@ -55,15 +55,19 @@
                     return;
                 }
                 
-                // 修复排序时的时间解析问题
-                txtFiles.sort((a, b) => {
-                    // 强制转换为时间戳，失败则返回0
-                    const timeA = parseTimeToTimestamp(a.updated_at);
-                    const timeB = parseTimeToTimestamp(b.updated_at);
+                // 先尝试获取详细文件信息（包含更完整的时间数据）
+                const filesWithDetails = await Promise.all(
+                    txtFiles.map(file => fetchFileDetails(file))
+                );
+                
+                // 按时间排序（使用可用的最新时间字段）
+                filesWithDetails.sort((a, b) => {
+                    const timeA = getBestTimestamp(a);
+                    const timeB = getBestTimestamp(b);
                     return timeB - timeA;
                 });
                 
-                displayFiles(txtFiles);
+                displayFiles(filesWithDetails);
                 
             } catch (error) {
                 document.getElementById("fileContainer").innerHTML = 
@@ -71,29 +75,85 @@
             }
         }
 
-        // 安全解析时间为时间戳的工具函数
-        function parseTimeToTimestamp(timeString) {
-            if (!timeString) return 0;
-            const timestamp = new Date(timeString).getTime();
-            // 处理Invalid Date的情况（返回0）
-            return isNaN(timestamp) ? 0 : timestamp;
+        // 获取文件详细信息（可能包含更多时间字段）
+        async function fetchFileDetails(file) {
+            try {
+                const detailResponse = await fetch(file.url);
+                if (detailResponse.ok) {
+                    const detailData = await detailResponse.json();
+                    // 合并基础信息和详细信息
+                    return { ...file, ...detailData };
+                }
+            } catch (e) {
+                console.log(`获取${file.name}详细信息失败`, e);
+            }
+            return file;
         }
 
-        // 安全格式化时间的工具函数
-        function formatTimeSafely(timeString) {
-            if (!timeString) return "无时间信息";
+        // 尝试从多个字段获取时间戳（增加容错）
+        function getBestTimestamp(file) {
+            // 尝试多个可能的时间字段
+            const timeFields = ['updated_at', 'committer.date', 'created_at', 'author.date'];
             
-            const timestamp = parseTimeToTimestamp(timeString);
-            if (timestamp === 0) return "时间解析失败";
+            for (const field of timeFields) {
+                let value;
+                try {
+                    // 支持嵌套字段（如committer.date）
+                    value = field.split('.').reduce((obj, key) => obj[key], file);
+                } catch (e) {
+                    continue;
+                }
+                
+                if (value) {
+                    const timestamp = new Date(value).getTime();
+                    if (!isNaN(timestamp)) {
+                        return timestamp;
+                    }
+                }
+            }
+            
+            // 所有字段都失败时，使用文件名称中的日期（如果有）
+            return getTimestampFromFileName(file.name) || 0;
+        }
+
+        // 从文件名提取日期（例如"20231005-笔记.txt"）
+        function getTimestampFromFileName(name) {
+            const datePatterns = [
+                /(\d{4})-?(\d{2})-?(\d{2})/, // 2023-10-05 或 20231005
+                /(\d{4})年(\d{2})月(\d{2})日/ // 2023年10月05日
+            ];
+            
+            for (const pattern of datePatterns) {
+                const match = name.match(pattern);
+                if (match) {
+                    const [, year, month, day] = match;
+                    const date = new Date(`${year}-${month}-${day}`);
+                    if (!isNaN(date.getTime())) {
+                        return date.getTime();
+                    }
+                }
+            }
+            
+            return 0;
+        }
+
+        // 安全格式化时间
+        function formatTimeSafely(file) {
+            const timestamp = getBestTimestamp(file);
+            if (timestamp === 0) {
+                return "暂无时间信息";
+            }
             
             const date = new Date(timestamp);
-            const year = date.getFullYear();
-            const month = String(date.getMonth() + 1).padStart(2, '0');
-            const day = String(date.getDate()).padStart(2, '0');
-            const hours = String(date.getHours()).padStart(2, '0');
-            const minutes = String(date.getMinutes()).padStart(2, '0');
-            
-            return `${year}-${month}-${day} ${hours}:${minutes}`;
+            return `${date.getFullYear()}-${
+                String(date.getMonth() + 1).padStart(2, '0')
+            }-${
+                String(date.getDate()).padStart(2, '0')
+            } ${
+                String(date.getHours()).padStart(2, '0')
+            }:${
+                String(date.getMinutes()).padStart(2, '0')
+            }`;
         }
 
         async function displayFiles(files) {
@@ -112,8 +172,7 @@
                         content = `文件内容解码失败: ${e.message}`;
                     }
                     
-                    // 使用安全格式化函数
-                    const formattedTime = formatTimeSafely(file.updated_at);
+                    const formattedTime = formatTimeSafely(file);
                     
                     const fileCard = document.createElement('div');
                     fileCard.className = "bg-white rounded-lg shadow-sm p-5 hover:shadow-md transition-shadow";
