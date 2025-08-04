@@ -20,7 +20,6 @@
         </header>
 
         <div id="fileContainer" class="space-y-8">
-            <!-- 加载状态 -->
             <div id="loading" class="text-center py-10">
                 <p class="text-gray-600">加载文件中...</p>
             </div>
@@ -28,30 +27,24 @@
     </div>
 
     <script>
-        // 配置GitHub
         const config = {
             username: "250502520",
             repo: "suisuinian",
             branch: "main" 
         };
 
-        // 页面加载后执行
         document.addEventListener('DOMContentLoaded', () => {
             loadFilesByTime();
         });
 
-        // 按时间顺序加载文件（由晚到早）
         async function loadFilesByTime() {
             try {
-                // 1. 获取仓库根目录所有文件
                 const fileListUrl = `https://api.github.com/repos/${config.username}/${config.repo}/contents?ref=${config.branch}`;
                 const response = await fetch(fileListUrl);
                 
                 if (!response.ok) throw new Error("无法获取文件列表");
                 
                 const allFiles = await response.json();
-                
-                // 2. 筛选出txt文件
                 const txtFiles = allFiles.filter(file => 
                     file.type === 'file' && file.name.toLowerCase().endsWith('.txt')
                 );
@@ -62,14 +55,14 @@
                     return;
                 }
                 
-                // 3. 按更新时间排序（最新的在前）- 修复时间排序兼容性
+                // 修复排序时的时间解析问题
                 txtFiles.sort((a, b) => {
-                    const timeA = new Date(a.updated_at).getTime();
-                    const timeB = new Date(b.updated_at).getTime();
-                    return timeB - timeA; // 用时间戳比较更可靠
+                    // 强制转换为时间戳，失败则返回0
+                    const timeA = parseTimeToTimestamp(a.updated_at);
+                    const timeB = parseTimeToTimestamp(b.updated_at);
+                    return timeB - timeA;
                 });
                 
-                // 4. 加载并显示文件内容
                 displayFiles(txtFiles);
                 
             } catch (error) {
@@ -78,45 +71,50 @@
             }
         }
 
-        // 显示文件列表 - 修复乱码和时间显示问题
+        // 安全解析时间为时间戳的工具函数
+        function parseTimeToTimestamp(timeString) {
+            if (!timeString) return 0;
+            const timestamp = new Date(timeString).getTime();
+            // 处理Invalid Date的情况（返回0）
+            return isNaN(timestamp) ? 0 : timestamp;
+        }
+
+        // 安全格式化时间的工具函数
+        function formatTimeSafely(timeString) {
+            if (!timeString) return "无时间信息";
+            
+            const timestamp = parseTimeToTimestamp(timeString);
+            if (timestamp === 0) return "时间解析失败";
+            
+            const date = new Date(timestamp);
+            const year = date.getFullYear();
+            const month = String(date.getMonth() + 1).padStart(2, '0');
+            const day = String(date.getDate()).padStart(2, '0');
+            const hours = String(date.getHours()).padStart(2, '0');
+            const minutes = String(date.getMinutes()).padStart(2, '0');
+            
+            return `${year}-${month}-${day} ${hours}:${minutes}`;
+        }
+
         async function displayFiles(files) {
             const container = document.getElementById("fileContainer");
-            container.innerHTML = ''; // 清空加载状态
+            container.innerHTML = '';
             
             for (const file of files) {
                 try {
-                    // 获取文件内容（修复中文乱码）
                     const contentResponse = await fetch(file.url);
                     const contentData = await contentResponse.json();
                     
-                    // 处理base64解码，兼容中文等特殊字符
                     let content = '';
                     try {
-                        // 先解码base64，再转UTF-8
                         content = decodeURIComponent(escape(atob(contentData.content)));
                     } catch (e) {
                         content = `文件内容解码失败: ${e.message}`;
                     }
                     
-                    // 格式化时间（兼容不同浏览器）
-                    let formattedTime = '时间未知';
-                    try {
-                        const date = new Date(file.updated_at);
-                        // 手动拼接确保格式一致
-                        formattedTime = `${date.getFullYear()}-${
-                            (date.getMonth() + 1).toString().padStart(2, '0')
-                        }-${
-                            date.getDate().toString().padStart(2, '0')
-                        } ${
-                            date.getHours().toString().padStart(2, '0')
-                        }:${
-                            date.getMinutes().toString().padStart(2, '0')
-                        }`;
-                    } catch (e) {
-                        formattedTime = '时间解析失败';
-                    }
+                    // 使用安全格式化函数
+                    const formattedTime = formatTimeSafely(file.updated_at);
                     
-                    // 创建文件卡片
                     const fileCard = document.createElement('div');
                     fileCard.className = "bg-white rounded-lg shadow-sm p-5 hover:shadow-md transition-shadow";
                     fileCard.innerHTML = `
@@ -131,7 +129,6 @@
                     
                     container.appendChild(fileCard);
                 } catch (error) {
-                    // 单个文件加载失败不影响其他文件
                     const errorCard = document.createElement('div');
                     errorCard.className = "bg-red-50 rounded-lg p-5";
                     errorCard.innerHTML = `<p class="text-red-600">加载文件 ${file.name} 失败: ${error.message}</p>`;
