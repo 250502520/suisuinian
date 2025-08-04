@@ -16,7 +16,7 @@
     <div class="max-w-3xl mx-auto p-4">
         <header class="mb-8">
             <h1 class="text-3xl font-bold text-gray-800">碎碎念</h1>
-            <p class="text-gray-500 mt-2">按更新时间排序</p>
+            <p class="text-gray-500 mt-2">按更新时间排序（最新在前）</p>
         </header>
 
         <div id="fileContainer" class="space-y-8">
@@ -62,8 +62,12 @@
                     return;
                 }
                 
-                // 3. 按更新时间排序（最新的在前）
-                txtFiles.sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at));
+                // 3. 按更新时间排序（最新的在前）- 修复时间排序兼容性
+                txtFiles.sort((a, b) => {
+                    const timeA = new Date(a.updated_at).getTime();
+                    const timeB = new Date(b.updated_at).getTime();
+                    return timeB - timeA; // 用时间戳比较更可靠
+                });
                 
                 // 4. 加载并显示文件内容
                 displayFiles(txtFiles);
@@ -74,40 +78,65 @@
             }
         }
 
-        // 显示文件列表
+        // 显示文件列表 - 修复乱码和时间显示问题
         async function displayFiles(files) {
             const container = document.getElementById("fileContainer");
             container.innerHTML = ''; // 清空加载状态
             
             for (const file of files) {
-                // 获取文件内容（base64解码）
-                const contentResponse = await fetch(file.url);
-                const contentData = await contentResponse.json();
-                const content = atob(contentData.content);
-                
-                // 格式化时间
-                const formattedTime = new Date(file.updated_at).toLocaleString('zh-CN', {
-                    year: 'numeric',
-                    month: '2-digit',
-                    day: '2-digit',
-                    hour: '2-digit',
-                    minute: '2-digit'
-                });
-                
-                // 创建文件卡片
-                const fileCard = document.createElement('div');
-                fileCard.className = "bg-white rounded-lg shadow-sm p-5";
-                fileCard.innerHTML = `
-                    <div class="flex justify-between items-center mb-3">
-                        <h3 class="text-xl font-semibold text-gray-800">${file.name}</h3>
-                        <span class="text-sm text-gray-500">${formattedTime}</span>
-                    </div>
-                    <div class="text-content text-gray-700 bg-gray-50 p-4 rounded-md text-sm">
-                        ${content}
-                    </div>
-                `;
-                
-                container.appendChild(fileCard);
+                try {
+                    // 获取文件内容（修复中文乱码）
+                    const contentResponse = await fetch(file.url);
+                    const contentData = await contentResponse.json();
+                    
+                    // 处理base64解码，兼容中文等特殊字符
+                    let content = '';
+                    try {
+                        // 先解码base64，再转UTF-8
+                        content = decodeURIComponent(escape(atob(contentData.content)));
+                    } catch (e) {
+                        content = `文件内容解码失败: ${e.message}`;
+                    }
+                    
+                    // 格式化时间（兼容不同浏览器）
+                    let formattedTime = '时间未知';
+                    try {
+                        const date = new Date(file.updated_at);
+                        // 手动拼接确保格式一致
+                        formattedTime = `${date.getFullYear()}-${
+                            (date.getMonth() + 1).toString().padStart(2, '0')
+                        }-${
+                            date.getDate().toString().padStart(2, '0')
+                        } ${
+                            date.getHours().toString().padStart(2, '0')
+                        }:${
+                            date.getMinutes().toString().padStart(2, '0')
+                        }`;
+                    } catch (e) {
+                        formattedTime = '时间解析失败';
+                    }
+                    
+                    // 创建文件卡片
+                    const fileCard = document.createElement('div');
+                    fileCard.className = "bg-white rounded-lg shadow-sm p-5 hover:shadow-md transition-shadow";
+                    fileCard.innerHTML = `
+                        <div class="flex justify-between items-center mb-3">
+                            <h3 class="text-xl font-semibold text-gray-800">${file.name}</h3>
+                            <span class="text-sm text-gray-500">${formattedTime}</span>
+                        </div>
+                        <div class="text-content text-gray-700 bg-gray-50 p-4 rounded-md text-sm">
+                            ${content}
+                        </div>
+                    `;
+                    
+                    container.appendChild(fileCard);
+                } catch (error) {
+                    // 单个文件加载失败不影响其他文件
+                    const errorCard = document.createElement('div');
+                    errorCard.className = "bg-red-50 rounded-lg p-5";
+                    errorCard.innerHTML = `<p class="text-red-600">加载文件 ${file.name} 失败: ${error.message}</p>`;
+                    container.appendChild(errorCard);
+                }
             }
         }
     </script>
