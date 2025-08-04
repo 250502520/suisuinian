@@ -16,7 +16,7 @@
     <div class="max-w-3xl mx-auto p-4">
         <header class="mb-8">
             <h1 class="text-3xl font-bold text-gray-800">碎碎念</h1>
-            <p class="text-gray-500 mt-2">按更新时间排序（最新在前）</p>
+            <p class="text-gray-500 mt-2">按文件名时间排序（最新在前，精确到分钟）</p>
         </header>
 
         <div id="fileContainer" class="space-y-8">
@@ -34,10 +34,11 @@
         };
 
         document.addEventListener('DOMContentLoaded', () => {
-            loadFilesByTime();
+            loadFilesByFileNameDateTime();
         });
 
-        async function loadFilesByTime() {
+        // 按文件名中的“年月日时分”加载并排序
+        async function loadFilesByFileNameDateTime() {
             try {
                 const fileListUrl = `https://api.github.com/repos/${config.username}/${config.repo}/contents?ref=${config.branch}`;
                 const response = await fetch(fileListUrl);
@@ -45,7 +46,7 @@
                 if (!response.ok) throw new Error(`API请求失败 (${response.status})`);
                 
                 const allFiles = await response.json();
-                const txtFiles = allFiles.filter(file => 
+                let txtFiles = allFiles.filter(file => 
                     file.type === 'file' && file.name.toLowerCase().endsWith('.txt')
                 );
                 
@@ -54,20 +55,25 @@
                         '<p class="text-gray-600 text-center py-10">未找到任何txt文件</p>';
                     return;
                 }
-                
-                // 先尝试获取详细文件信息（包含更完整的时间数据）
-                const filesWithDetails = await Promise.all(
-                    txtFiles.map(file => fetchFileDetails(file))
-                );
-                
-                // 按时间排序（使用可用的最新时间字段）
-                filesWithDetails.sort((a, b) => {
-                    const timeA = getBestTimestamp(a);
-                    const timeB = getBestTimestamp(b);
+
+                // 提取文件名中的“年月日时分”
+                txtFiles = txtFiles.map(file => {
+                    const { date, dateTimeText } = extractDateTimeFromFileName(file.name);
+                    return {
+                        ...file,
+                        fileNameDateTime: date, // 包含时分的日期对象（用于排序）
+                        fileNameDateTimeText: dateTimeText // 格式化的“年月日 时分”文本（用于显示）
+                    };
+                });
+
+                // 按“年月日时分”排序（最新的在前）
+                txtFiles.sort((a, b) => {
+                    const timeA = a.fileNameDateTime ? a.fileNameDateTime.getTime() : 0;
+                    const timeB = b.fileNameDateTime ? b.fileNameDateTime.getTime() : 0;
                     return timeB - timeA;
                 });
-                
-                displayFiles(filesWithDetails);
+
+                displayFiles(txtFiles);
                 
             } catch (error) {
                 document.getElementById("fileContainer").innerHTML = 
@@ -75,87 +81,74 @@
             }
         }
 
-        // 获取文件详细信息（可能包含更多时间字段）
-        async function fetchFileDetails(file) {
-            try {
-                const detailResponse = await fetch(file.url);
-                if (detailResponse.ok) {
-                    const detailData = await detailResponse.json();
-                    // 合并基础信息和详细信息
-                    return { ...file, ...detailData };
+        // 从文件名提取“年月日时分”（核心修改部分）
+        function extractDateTimeFromFileName(fileName) {
+            // 支持的包含时分的文件名格式正则
+            const dateTimePatterns = [
+                // 格式1：2023-10-05-14-30 或 2023-10-05-14:30
+                { 
+                    regex: /(\d{4})-(\d{2})-(\d{2})[-\:](\d{2})[-\:](\d{2})/, 
+                    format: (y, m, d, h, min) => `${y}-${m}-${d} ${h}:${min}` 
+                },
+                // 格式2：202310051430（年月日时分连续数字）
+                { 
+                    regex: /(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})/, 
+                    format: (y, m, d, h, min) => `${y}-${m}-${d} ${h}:${min}` 
+                },
+                // 格式3：2023年10月05日14时30分 或 2023年10月05日14:30
+                { 
+                    regex: /(\d{4})年(\d{2})月(\d{2})日(\d{2})[时\:](\d{2})[分]?/, 
+                    format: (y, m, d, h, min) => `${y}年${m}月${d}日 ${h}:${min}` 
                 }
-            } catch (e) {
-                console.log(`获取${file.name}详细信息失败`, e);
-            }
-            return file;
-        }
+            ];
 
-        // 尝试从多个字段获取时间戳（增加容错）
-        function getBestTimestamp(file) {
-            // 尝试多个可能的时间字段
-            const timeFields = ['updated_at', 'committer.date', 'created_at', 'author.date'];
-            
-            for (const field of timeFields) {
-                let value;
-                try {
-                    // 支持嵌套字段（如committer.date）
-                    value = field.split('.').reduce((obj, key) => obj[key], file);
-                } catch (e) {
-                    continue;
-                }
-                
-                if (value) {
-                    const timestamp = new Date(value).getTime();
-                    if (!isNaN(timestamp)) {
-                        return timestamp;
+            for (const pattern of dateTimePatterns) {
+                const match = fileName.match(pattern.regex);
+                if (match) {
+                    const [, year, month, day, hour, minute] = match;
+                    // 验证日期和时间有效性（避免25:61这种无效时间）
+                    const date = new Date(`${year}-${month}-${day}T${hour}:${minute}`);
+                    if (date.getFullYear() == year && 
+                        date.getMonth() + 1 == month && 
+                        date.getDate() == day &&
+                        date.getHours() == hour && 
+                        date.getMinutes() == minute) {
+                        return {
+                            date: date,
+                            dateTimeText: pattern.format(year, month, day, hour, minute)
+                        };
                     }
                 }
             }
-            
-            // 所有字段都失败时，使用文件名称中的日期（如果有）
-            return getTimestampFromFileName(file.name) || 0;
-        }
 
-        // 从文件名提取日期（例如"20231005-笔记.txt"）
-        function getTimestampFromFileName(name) {
-            const datePatterns = [
-                /(\d{4})-?(\d{2})-?(\d{2})/, // 2023-10-05 或 20231005
-                /(\d{4})年(\d{2})月(\d{2})日/ // 2023年10月05日
+            // 若未匹配到时分，尝试仅提取日期（兼容旧格式）
+            const dateOnlyPatterns = [
+                { regex: /(\d{4})-(\d{2})-(\d{2})/, format: (y, m, d) => `${y}-${m}-${d} 00:00` },
+                { regex: /(\d{4})(\d{2})(\d{2})/, format: (y, m, d) => `${y}-${m}-${d} 00:00` },
+                { regex: /(\d{4})年(\d{2})月(\d{2})日/, format: (y, m, d) => `${y}年${m}月${d}日 00:00` }
             ];
-            
-            for (const pattern of datePatterns) {
-                const match = name.match(pattern);
+            for (const pattern of dateOnlyPatterns) {
+                const match = fileName.match(pattern.regex);
                 if (match) {
                     const [, year, month, day] = match;
                     const date = new Date(`${year}-${month}-${day}`);
-                    if (!isNaN(date.getTime())) {
-                        return date.getTime();
+                    if (date.getFullYear() == year && date.getMonth() + 1 == month && date.getDate() == day) {
+                        return {
+                            date: date,
+                            dateTimeText: pattern.format(year, month, day)
+                        };
                     }
                 }
             }
-            
-            return 0;
+
+            // 完全无有效时间
+            return {
+                date: null,
+                dateTimeText: "文件名无有效时间"
+            };
         }
 
-        // 安全格式化时间
-        function formatTimeSafely(file) {
-            const timestamp = getBestTimestamp(file);
-            if (timestamp === 0) {
-                return "暂无时间信息";
-            }
-            
-            const date = new Date(timestamp);
-            return `${date.getFullYear()}-${
-                String(date.getMonth() + 1).padStart(2, '0')
-            }-${
-                String(date.getDate()).padStart(2, '0')
-            } ${
-                String(date.getHours()).padStart(2, '0')
-            }:${
-                String(date.getMinutes()).padStart(2, '0')
-            }`;
-        }
-
+        // 显示文件列表（使用文件名中的时分）
         async function displayFiles(files) {
             const container = document.getElementById("fileContainer");
             container.innerHTML = '';
@@ -164,7 +157,6 @@
                 try {
                     const contentResponse = await fetch(file.url);
                     const contentData = await contentResponse.json();
-                    
                     let content = '';
                     try {
                         content = decodeURIComponent(escape(atob(contentData.content)));
@@ -172,14 +164,18 @@
                         content = `文件内容解码失败: ${e.message}`;
                     }
                     
-                    const formattedTime = formatTimeSafely(file);
-                    
                     const fileCard = document.createElement('div');
                     fileCard.className = "bg-white rounded-lg shadow-sm p-5 hover:shadow-md transition-shadow";
+                    if (!file.fileNameDateTime) {
+                        fileCard.classList.add("border-l-4", "border-yellow-400");
+                    }
+                    
                     fileCard.innerHTML = `
                         <div class="flex justify-between items-center mb-3">
                             <h3 class="text-xl font-semibold text-gray-800">${file.name}</h3>
-                            <span class="text-sm text-gray-500">${formattedTime}</span>
+                            <span class="text-sm ${file.fileNameDateTime ? 'text-gray-500' : 'text-yellow-600'}">
+                                ${file.fileNameDateTimeText}
+                            </span>
                         </div>
                         <div class="text-content text-gray-700 bg-gray-50 p-4 rounded-md text-sm">
                             ${content}
